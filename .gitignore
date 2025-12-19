@@ -1,0 +1,8 @@
+# Entorno Virtual y Dependencias
+venv/
+*.pyc
+__pycache__/
+
+# Data
+data/
+data.zip

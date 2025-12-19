@@ -1,0 +1,292 @@
+# Detector de Plazas de Aparcamiento - Implementation Plan
+
+## Overview
+
+This project develops a real-time parking occupancy detection system using **classical Computer Vision techniques** (not Deep Learning). The system monitors ~51 parking spots in an outdoor parking lot, remaining robust to drastic lighting changes (sun and shadow).
+
+**Key Design Decision**: We use adaptive thresholding and texture analysis rather than Deep Learning because:
+- Computationally lightweight (runs in real-time on modest hardware)
+- No training data labeling or GPU required
+- Mathematically explainable for academic presentations
+- Complexity: O(N) linear with pixel count
+
+## Dataset Context
+
+- **Source**: ~440 images from `data/` folder showing parking lot at different times/occupancies
+- **ROI**: 51 parking spots in central-right zone (avoiding tree occlusions and edge distortions)
+- **Challenge**: Severe shadow/sun contrast from building projections
+
+## Proposed Changes
+
+### Configuration Module
+
+#### [NEW] [configurar_plazas.py](file:///C:/Users/nico.azcarate/Desktop/Vision%20por%20Computador/configurar_plazas.py)
+
+**Purpose**: Offline manual ROI definition tool.
+
+**Functionality**:
+- Load first image from `data/` folder
+- Interactive mouse-based rectangle drawing
+- Store 51 parking spot coordinates as `(x, y, width, height)` tuples
+- Serialize to `plazas.pickle` for reuse
+
+**Technical Details**:
+- Use `cv2.setMouseCallback()` for click-and-drag interaction
+- Left-click to define rectangle start/end points
+- Press 'r' to reset last rectangle
+- Press 's' to save and exit
+- Visual feedback: draw rectangles in real-time
+
+---
+
+### Detection Pipeline
+
+#### [NEW] [detector_aparcamiento.ipynb](file:///C:/Users/nico.azcarate/Desktop/Vision%20por%20Computador/detector_aparcamiento.ipynb)
+
+Main Jupyter notebook implementing the complete detection pipeline. Structured as separate code blocks for sequential execution:
+
+**Block 1: Imports & Setup**
+```python
+import cv2
+import numpy as np
+import pickle
+from pathlib import Path
+import matplotlib.pyplot as plt
+```
+
+**Block 2: Load Plaza Configuration**
+- Read `plazas.pickle`
+- Display plaza count and sample coordinates
+
+**Block 3: Preprocessing Functions**
+
+```python
+def preprocesar_imagen(img):
+    # A. Conversión a escala de grises
+    # Justificación: Color no es determinante, reduce a 1/3 de datos
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    
+    # B. Suavizado Gaussiano
+    # Justificación: Elimina ruido de alta frecuencia de cámara/asfalto
+    # Parámetros: kernel 5x5 (σ automático)
+    blur = cv2.GaussianBlur(gray, (5, 5), 0)
+    
+    return blur
+```
+
+**Block 4: Adaptive Thresholding**
+
+```python
+def umbralizar_adaptativo(img_blur, block_size=21, C=5):
+    # Umbralización adaptativa con ventana local
+    # CRITICAL: Calcula umbral por vecindad, NO global
+    # Esto permite funcionar con sombras/sol en la misma imagen
+    binary = cv2.adaptiveThreshold(
+        img_blur,
+        255,
+        cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+        cv2.THRESH_BINARY_INV,  # INV: bordes/texturas = blanco
+        block_size,  # Tamaño de vecindad (debe ser impar)
+        C  # Constante de ajuste
+    )
+    return binary
+```
+
+**Mathematical Justification**:
+- Empty spot (asphalt): smooth texture → few white pixels
+- Occupied spot (car): many edges (windows, bumpers) → many white pixels
+
+**Block 5: Morphological Post-Processing**
+
+```python
+def filtro_mediana(img_binary):
+    # Elimina "ruido de sal" (puntos blancos aislados en asfalto)
+    # Preserva bordes fuertes de vehículos
+    return cv2.medianBlur(img_binary, 5)
+```
+
+**Block 6: Classification Engine**
+
+```python
+def detectar_ocupacion(img_binary, plazas, umbral_pixeles=500):
+    estados = []
+    conteos = []
+    
+    for (x, y, w, h) in plazas:
+        # Recortar ROI de imagen binaria procesada
+        roi = img_binary[y:y+h, x:x+w]
+        
+        # Contar píxeles blancos (no-cero)
+        pixel_count = cv2.countNonZero(roi)
+        conteos.append(pixel_count)
+        
+        # Decisión binaria
+        if pixel_count > umbral_pixeles:
+            estados.append("OCUPADO")
+        else:
+            estados.append("LIBRE")
+    
+    return estados, conteos
+```
+
+**Block 7: Visualization Layer**
+
+```python
+def visualizar_resultados(img_original, plazas, estados):
+    output = img_original.copy()
+    libres = 0
+    
+    for idx, ((x, y, w, h), estado) in enumerate(zip(plazas, estados)):
+        # Código de colores semántico
+        color = (0, 255, 0) if estado == "LIBRE" else (0, 0, 255)  # Verde/Rojo
+        
+        if estado == "LIBRE":
+            libres += 1
+        
+        # Dibujar rectángulo
+        cv2.rectangle(output, (x, y), (x+w, y+h), color, 2)
+        
+        # Opcional: Mostrar ID de plaza
+        cv2.putText(output, str(idx+1), (x+5, y+20), 
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1)
+    
+    # Contador global
+    texto = f"Libres: {libres} / Totales: {len(plazas)}"
+    cv2.putText(output, texto, (10, 30), 
+                cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
+    
+    return output, libres
+```
+
+**Block 8: Calibration with Trackbars**
+
+```python
+def calibrar_parametros(imagen_path, plazas):
+    img = cv2.imread(imagen_path)
+    cv2.namedWindow('Calibración')
+    
+    # Crear trackbars
+    cv2.createTrackbar('Umbral Píxeles', 'Calibración', 500, 2000, lambda x: None)
+    cv2.createTrackbar('Block Size', 'Calibración', 21, 99, lambda x: None)
+    cv2.createTrackbar('C Constant', 'Calibración', 5, 20, lambda x: None)
+    
+    while True:
+        # Leer valores actuales
+        umbral = cv2.getTrackbarPos('Umbral Píxeles', 'Calibración')
+        block_size = cv2.getTrackbarPos('Block Size', 'Calibración')
+        block_size = block_size if block_size % 2 == 1 else block_size + 1  # Debe ser impar
+        C = cv2.getTrackbarPos('C Constant', 'Calibración')
+        
+        # Pipeline completo
+        blur = preprocesar_imagen(img)
+        binary = umbralizar_adaptativo(blur, block_size, C)
+        cleaned = filtro_mediana(binary)
+        estados, conteos = detectar_ocupacion(cleaned, plazas, umbral)
+        output, libres = visualizar_resultados(img, plazas, estados)
+        
+        cv2.imshow('Calibración', output)
+        cv2.imshow('Binaria', cleaned)
+        
+        if cv2.waitKey(30) & 0xFF == ord('q'):
+            break
+    
+    cv2.destroyAllWindows()
+    return umbral, block_size, C
+```
+
+**Block 9: Batch Processing**
+
+Process all images from `data/` folder with optimized parameters.
+
+**Block 10: Validation & Metrics**
+
+```python
+def calcular_metricas(estados_predichos, estados_reales):
+    TP = sum(1 for p, r in zip(estados_predichos, estados_reales) 
+             if p == "OCUPADO" and r == "OCUPADO")
+    TN = sum(1 for p, r in zip(estados_predichos, estados_reales) 
+             if p == "LIBRE" and r == "LIBRE")
+    FP = sum(1 for p, r in zip(estados_predichos, estados_reales) 
+             if p == "OCUPADO" and r == "LIBRE")
+    FN = sum(1 for p, r in zip(estados_predichos, estados_reales) 
+             if p == "LIBRE" and r == "OCUPADO")
+    
+    accuracy = (TP + TN) / len(estados_reales) * 100
+    
+    return {
+        'TP': TP, 'TN': TN, 'FP': FP, 'FN': FN,
+        'Accuracy': accuracy
+    }
+```
+
+Select 3 key images:
+1. **Imagen A**: Full sun (e.g., midday)
+2. **Imagen B**: Mixed sun/shadow (most challenging)
+3. **Imagen C**: Cloudy/uniform lighting
+
+Manual labeling → confusion matrix → accuracy calculation
+
+---
+
+### Supporting Files
+
+#### [NEW] [plazas.pickle](file:///C:/Users/nico.azcarate/Desktop/Vision%20por%20Computador/plazas.pickle)
+
+Binary serialized file containing 51 parking spot coordinates. Generated by `configurar_plazas.py`.
+
+---
+
+## Verification Plan
+
+### Automated Tests
+
+1. **Configuration Tool Test**:
+   ```powershell
+   cd "C:\Users\nico.azcarate\Desktop\Vision por Computador"
+   python configurar_plazas.py
+   ```
+   - Verify: Interactive window opens with first image
+   - Manually draw 51 rectangles
+   - Verify: `plazas.pickle` created successfully
+
+2. **Notebook Execution Test**:
+   ```powershell
+   jupyter notebook detector_aparcamiento.ipynb
+   ```
+   - Execute all cells sequentially
+   - Verify: No errors in preprocessing pipeline
+   - Verify: Visualization displays correctly
+
+3. **Calibration Test**:
+   - Run calibration block with sample image
+   - Adjust trackbars to find optimal parameters
+   - Verify: Real-time update of detection results
+   - Document optimal values for different lighting conditions
+
+### Manual Verification
+
+1. **Visual Inspection**:
+   - Review detection output for 3 selected validation images
+   - Verify color coding: Green (Libre) / Red (Ocupado)
+   - Check counter matches visual inspection
+
+2. **Accuracy Validation**:
+   - Manually label ground truth for 3 test images
+   - Compare with algorithm predictions
+   - Calculate accuracy metrics
+   - **Target**: >90% accuracy for uniform lighting, >80% for mixed lighting
+
+3. **Edge Case Testing**:
+   - Test with shadows covering entire spots
+   - Test with motorcycles (smaller vehicles)
+   - Test with white cars vs. dark asphalt contrast
+   - Document failure modes for academic discussion
+
+### Success Criteria
+
+- ✅ Configuration tool successfully saves 51 ROIs
+- ✅ Pipeline processes all ~440 images without errors
+- ✅ Accuracy ≥ 85% on mixed lighting conditions
+- ✅ Notebook contains clear markdown explanations with mathematical justifications
+- ✅ Calibration system allows real-time parameter tuning
+- ✅ Results suitable for academic presentation (reproducible, well-documented)
