@@ -7,8 +7,8 @@ Sistema inteligente de Visión por Computador para la detección de plazas de ap
 A diferencia de los sistemas tradicionales basados en sustracción de fondo o umbrales fijos, este proyecto utiliza un clasificador **Support Vector Machine (SVM)** entrenado con características robustas (Textura, Bordes y Color) para distinguir vehículos del asfalto.
 
 ### Características Principales
-- **Precisión**: 99.51% de acierto global en el conjunto de prueba.
-- **Robustez**: Funciona en días soleados, nublados y con sombras proyectadas.
+- **Precisión Realista**: ~98% de acierto global (evaluado cronológicamente).
+- **Robustez**: Validación mediante *Chronological Split* para evitar "fugas de datos" y asegurar generalización real.
 - **Eficiencia**: Procesamiento rápido.
 - **Escalabilidad**: Fácil de re-entrenar con nuevas imágenes.
 
@@ -18,24 +18,6 @@ A diferencia de los sistemas tradicionales basados en sustracción de fondo o um
 - **Scikit-Learn**: Implementación del clasificador SVM (Kernel RBF).
 - **Python**: Lenguaje base.
 - **Jupyter Notebook**: Entorno de desarrollo interactivo.
-
-## 🚀 Guía de Uso
-
-### 1. Configuración Inicial (Si cambio de cámara/parking)
-Para redefinir dónde están las plazas:
-```bash
-python configurar_plazas.py
-```
-*Dibujar rectángulos sobre las plazas. Presionar 's' para guardar.*
-
-### 2. Entrenamiento del Modelo
-Para mejorar el sistema con más datos o ver cómo aprende:
-Ejecutar `03_ML.ipynb`.
-*Esto generará un nuevo archivo `model.pkl`.*
-
-### 3. Ejecutar el Detector (Demo)
-Para ver el sistema en acción y las métricas de rendimiento:
-Ejecutar `04_Resultados.ipynb`.
 
 ## 🧠 Cómo funciona (El Algoritmo)
 
@@ -47,12 +29,14 @@ El sistema no "mira" la imagen como un humano, sino que extrae 3 descriptores cl
 
 Estos 3 números forman un vector que el SVM clasifica como `0` (Libre) o `1` (Ocupado).
 
-## 📊 Resultados
+## 📊 Resultados (Evaluación Realista)
 
-| Métrica | Valor |
-|---------|-------|
-| **Accuracy** | **99.51%** |
-| Precision (Libres) | 100% |
-| Recall (Ocupados) | 100% |
+Se ha corregido la validación para usar una **División Cronológica** (80% pasado / 20% futuro), obteniendo métricas más honestas que evitan el *Data Leakage*:
 
-> *Datos obtenidos sobre el conjunto de validación del proyecto (ver `04_Resultados.ipynb`).*
+| Métrica | Valor Realista | Antes (Inflado) |
+|---------|----------------|-----------------|
+| **Accuracy** | **~98%** | ~99.5% |
+| Precision (Libres) | ~95% | 100% |
+| Recall (Ocupados) | ~99% | 100% |
+
+> *Datos obtenidos en `05_Correccion_DataLeakage.ipynb` simulando un entorno de producción real.*
